@@ -280,6 +280,8 @@ public final class MappingLookup {
         this.indexTimeScriptMappers = Collections.unmodifiableList(indexTimeScriptMappers);
         this.indexMode = indexMode;
 
+        checkCopyToTargets(indexMode);
+
         runtimeFields.stream().flatMap(RuntimeField::asMappedFieldTypes).map(MappedFieldType::name).forEach(this::validateDoesNotShadow);
         assert assertMapperNamesInterned(this.fieldMappers, this.objectMappers);
 
@@ -744,6 +746,36 @@ public final class MappingLookup {
             }
             if (shadowed.getMetricType() != null) {
                 throw new MapperParsingException("Field [" + name + "] attempted to shadow a time_series_metric");
+            }
+        }
+    }
+    private void checkCopyToTargets(IndexMode indexMode) {
+        for (String targetField : fieldTypeLookup.getCopyToDestinationFields()) {
+            if (fieldTypeLookup.get(targetField) != null) {
+                continue;
+            }
+            ObjectMapper.Dynamic dynamic = null;
+            String currentPath = targetField;
+            while (true) {
+                int dotIndex = currentPath.lastIndexOf('.');
+                if (dotIndex < 0) {
+                    break;
+                }
+                currentPath = currentPath.substring(0, dotIndex);
+                ObjectMapper parent = objectMappers.get(currentPath);
+                if (parent != null && parent.dynamic() != null) {
+                    dynamic = parent.dynamic();
+                    break;
+                }
+            }
+            if (dynamic == null) {
+                dynamic = ObjectMapper.Dynamic.getRootDynamic(this);
+            }
+            if (indexMode != null && indexMode.isStrictColumnar()) {
+                dynamic = mapping.getRoot().resolveDynamic(targetField, dynamic);
+            }
+            if (dynamic == ObjectMapper.Dynamic.FALSE || dynamic == ObjectMapper.Dynamic.STRICT) {
+                throw new IllegalArgumentException("copy_to in mapping is copying to a non-existent field [" + targetField + "] when dynamic mappings are disabled");
             }
         }
     }
